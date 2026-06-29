@@ -11,11 +11,14 @@ RLP-0 is semantically active but operationally minimal.
 Active signaling, not active acting.
 """
 
+import logging
 from datetime import datetime, timezone
 from typing import Optional, Callable, List
 
+logger = logging.getLogger(__name__)
+
 from .semantic import RelationalState
-from .signals import Signal, SignalType, SignalBus, RUPTURE_DETECTED
+from .signals import Signal, SignalType, SignalBus, RUPTURE_DETECTED, REPAIR_COMPLETE
 from .gates import Gate
 
 
@@ -161,29 +164,40 @@ class RLP0:
     def acknowledge_repair(self) -> bool:
         """
         Acknowledge that repair has been performed.
-        
-        Called by expression protocols (HX/AX) after performing repair.
-        RLP-0 validates repair occurred and releases the gate.
-        
-        MVK validation: trust + log (repair claimed → accepted)
-        Future versions may recompute risk and require threshold.
-        
+
+        Called by expression protocols (HX/AX) after repair actions are taken.
+        RLP-0 recomputes rupture risk from current primitives and only releases
+        the gate if risk has actually dropped below threshold — not on the
+        claim alone.
+
         Returns:
-            True if gate was released, False if wasn't gated
+            True if repair was validated and gate released.
+            False if not gated, or risk is still above threshold (repair insufficient).
         """
         if not self.is_gated:
             return False
-        
-        # MVK: trust the expression protocol's repair claim
-        # Log is implicit in gate history
-        
-        # Recompute risk (repair should have improved primitives)
-        self.compute_rupture_risk()
-        
-        # Release gate
-        self._gate.release(rupture_risk=self._state.rupture_risk)
+
+        risk = self.compute_rupture_risk()
+
+        if risk >= self._rupture_threshold:
+            # Repair claimed but primitives haven't actually recovered — gate stays.
+            logger.warning(
+                "acknowledge_repair: risk %.2f still >= threshold %.2f — gate remains closed",
+                risk, self._rupture_threshold,
+            )
+            return False
+
+        self._gate.release(rupture_risk=risk)
         self._state.is_gated = False
-        
+
+        signal = Signal(
+            signal_type=REPAIR_COMPLETE,
+            timestamp=datetime.now(timezone.utc),
+            rupture_risk=risk,
+            context=f"Repair validated: risk dropped to {risk:.2f} (threshold {self._rupture_threshold})",
+        )
+        self._signal_bus.emit(signal)
+
         return True
     
     def check_gate(self) -> bool:

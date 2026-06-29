@@ -16,6 +16,7 @@ from typing import Optional, Callable, List
 class SignalType(Enum):
     """Types of signals RLP-0 can emit."""
     RUPTURE_DETECTED = auto()
+    REPAIR_COMPLETE  = auto()
 
 
 @dataclass
@@ -35,8 +36,8 @@ class Signal:
         return f"[{self.signal_type.name}] risk={self.rupture_risk:.2f} at {self.timestamp.isoformat()}"
 
 
-# Convenience constant
 RUPTURE_DETECTED = SignalType.RUPTURE_DETECTED
+REPAIR_COMPLETE  = SignalType.REPAIR_COMPLETE
 
 
 class SignalBus:
